@@ -46,7 +46,7 @@ Detailed ship models, engine glows, and weapon effects rendered in 3D.
 
 1. Clone this repository.
    ```bash
-   git clone https://github.com/yourusername/Ginei.git
+   git clone https://github.com/xex-ken-xex/SpacePeraPera.git
    ```
 2. Start a local server in the project directory.
    ```bash
