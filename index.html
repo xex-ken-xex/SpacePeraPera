@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>戦闘システムデモ</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Roboto:wght@300;400;700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+
+<body>
+    <div class="app-container">
+        <div id="gameContainer" style="width: 100%; height: 100%; position: absolute; top: 0; left: 0; z-index: 0;">
+        </div>
+
+        <!-- HUD Layer -->
+        <div id="ui-layer"
+            style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10;">
+
+            <!-- Center Notifications -->
+            <div id="gameOverMessage" class="game-over-message"></div>
+            <div id="pauseMessage" class="game-over-message" style="display: none;">PAUSED</div>
+
+            <!-- Bottom Command Bar -->
+            <div class="command-bar">
+                <div class="command-group time-controls">
+                    <button id="time-slower" class="icon-button"><i class="fas fa-backward-step"></i></button>
+                    <div id="timeInfo">TIME: 00:00 | x1</div>
+                    <button id="time-faster" class="icon-button"><i class="fas fa-forward-step"></i></button>
+                </div>
+                <div class="command-group main-controls">
+                    <button id="pauseButton" class="icon-button large"><i class="fas fa-pause"></i></button>
+                </div>
+                <div id="formation-deck" class="command-group formation-controls">
+                    <button class="cyber-button small" data-formation="spindle">SPINDLE</button>
+                    <button class="cyber-button small active" data-formation="line">LINE</button>
+                    <button class="cyber-button small" data-formation="ring">RING</button>
+                </div>
+            </div>
+
+            <!-- Right Side Panel -->
+            <div class="side-panel">
+                <div class="tab-buttons">
+                    <button class="tab-button active" data-tab="unit-data">UNIT DATA</button>
+                    <button class="tab-button" data-tab="log">LOG</button>
+                </div>
+                <div class="tab-content active" id="tab-unit-data">
+                    <div id="unit-data-display">
+                        <!-- Content will be injected by uiUpdater.js -->
+                        <div class="unit-data-placeholder">NO UNIT SELECTED</div>
+                    </div>
+                </div>
+                <div class="tab-content" id="tab-log">
+                    <div id="messageArea" class="message-log"></div>
+                </div>
+            </div>
+
+            <!-- Top Right Debug -->
+            <div class="hud-panel top-right">
+                <p>COORDS: <span id="mouseCoord">N/A</span></p>
+            </div>
+        </div>
+
+        <div class="scan-line"></div>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+    <script type="module" src="js/main.js"></script>
+</body>
+
+</html>
