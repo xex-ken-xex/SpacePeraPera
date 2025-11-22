@@ -81,16 +81,9 @@ export class Unit {
         if (this.formation === formationType && !this.isChangingFormation) {
             return; // No change needed
         }
-
-        // If changing to a new formation, even during a transition, start a new one.
         this.formation = formationType;
-
-        // Store current positions as the starting point for the new transition
         this.shipInitialPositions = this.view.shipMeshes.map(ship => ship.position.clone());
-
-        // Calculate new target positions
         this.shipTargetPositions = this.view._calculateFormationPositions(formationType);
-
         this.isChangingFormation = true;
         this.formationTransitionTime = 0;
     }
@@ -101,18 +94,14 @@ export class Unit {
 
     update(dt) {
         if (this.hp <= 0) return;
-
         this._updateRotation(dt);
-
         if (this.isChangingFormation) {
             this._updateFormationChange(dt);
         }
-
         // Cooldowns
         if (this.attackCooldown > 0) {
             this.attackCooldown -= dt;
         }
-
         // State machine
         switch (this.state) {
             case STATE.MOVING:
@@ -122,11 +111,9 @@ export class Unit {
                 this._handleAttacking(dt);
                 break;
             case STATE.IDLE:
-                // If idle with a target, switch to attacking state
                 if (this.target) {
                     this.state = STATE.ATTACKING;
                 } else {
-                    // If no target, scan for enemies to attack automatically
                     this._scanAndEngage();
                 }
                 break;
@@ -135,20 +122,16 @@ export class Unit {
 
     _updateRotation(dt) {
         let angleDiff = this.targetHeading - this.heading;
-
-        // Normalize the angle difference to the range [-PI, PI] for shortest turn
+        // Normalize to [-PI, PI]
         while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
         while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
-
         const maxTurn = this.turnSpeed * (dt / 1000);
-
         if (Math.abs(angleDiff) < maxTurn) {
             this.heading = this.targetHeading;
         } else {
             this.heading += Math.sign(angleDiff) * maxTurn;
         }
-
-        // Normalize heading to prevent it from growing indefinitely
+        // Normalize heading
         while (this.heading > Math.PI) this.heading -= 2 * Math.PI;
         while (this.heading < -Math.PI) this.heading += 2 * Math.PI;
     }
@@ -156,46 +139,61 @@ export class Unit {
     _updateFormationChange(dt) {
         this.formationTransitionTime += dt;
         const progress = Math.min(this.formationTransitionTime / this.formationTransitionDuration, 1.0);
-
-        // Ease-out progress for a smoother stop
-        const easedProgress = 1 - Math.pow(1 - progress, 3); // Cubic ease-out
-
+        const easedProgress = 1 - Math.pow(1 - progress, 3);
         this.view.lerpShips(this.shipInitialPositions, this.shipTargetPositions, easedProgress);
-
         if (progress >= 1.0) {
             this.isChangingFormation = false;
-            // Snap to final positions to avoid floating point inaccuracies
             this.view.snapShips(this.shipTargetPositions);
         }
     }
 
     _scanAndEngage() {
-        if (this.attackCooldown > 0) return; // Don't scan if can't attack
-
-        const enemies = this.game.units.filter(u =>
-            u.owner !== this.owner &&
-            u.hp > 0 &&
-            COORD.distance(this.x, this.y, u.x, u.y) <= this.range
+        if (this.attackCooldown > 0) return;
+        // 1. Enemies within attack range
+        const enemiesInRange = this.game.units.filter(u =>
+            u.owner !== this.owner && u.hp > 0 && COORD.distance(this.x, this.y, u.x, u.y) <= this.range
         );
-
-        if (enemies.length > 0) {
-            // Find the closest enemy
-            let closestEnemy = enemies[0];
-            let minDistance = COORD.distance(this.x, this.y, closestEnemy.x, closestEnemy.y);
-
-            for (let i = 1; i < enemies.length; i++) {
-                const distance = COORD.distance(this.x, this.y, enemies[i].x, enemies[i].y);
-                if (distance < minDistance) {
-                    minDistance = distance;
-                    closestEnemy = enemies[i];
+        if (enemiesInRange.length > 0) {
+            let closest = enemiesInRange[0];
+            let minDist = COORD.distance(this.x, this.y, closest.x, closest.y);
+            for (let i = 1; i < enemiesInRange.length; i++) {
+                const e = enemiesInRange[i];
+                const d = COORD.distance(this.x, this.y, e.x, e.y);
+                if (d < minDist) {
+                    minDist = d;
+                    closest = e;
                 }
             }
-
-            // Set the closest enemy as target and switch to attacking state
-            this.target = closestEnemy;
+            this.target = closest;
             this.state = STATE.ATTACKING;
             this.view.setDestinationMarker(false);
             return;
+        }
+        // 2. Enemies visible to allies
+        const allies = this.game.units.filter(u => u.owner === this.owner && u.hp > 0);
+        const visibleSet = new Set();
+        for (const ally of allies) {
+            const visible = this.game.units.filter(u =>
+                u.owner !== this.owner && u.hp > 0 && COORD.distance(ally.x, ally.y, u.x, u.y) <= ally.sightRange
+            );
+            for (const v of visible) visibleSet.add(v);
+        }
+        const visibleEnemies = Array.from(visibleSet);
+        if (visibleEnemies.length > 0) {
+            let closest = visibleEnemies[0];
+            let minDist = COORD.distance(this.x, this.y, closest.x, closest.y);
+            for (let i = 1; i < visibleEnemies.length; i++) {
+                const e = visibleEnemies[i];
+                const d = COORD.distance(this.x, this.y, e.x, e.y);
+                if (d < minDist) {
+                    minDist = d;
+                    closest = e;
+                }
+            }
+            this.target = closest;
+            this.targetPosition = { x: closest.x, y: closest.y };
+            this.state = STATE.MOVING;
+            this.view.setDestinationMarker(true, closest.x, closest.y);
         }
     }
 
@@ -204,10 +202,7 @@ export class Unit {
             this.state = STATE.IDLE;
             return;
         }
-
         const dist = COORD.distance(this.x, this.y, this.targetPosition.x, this.targetPosition.y);
-
-        // Stop if very close to avoid spinning
         if (dist < 5) {
             this.x = this.targetPosition.x;
             this.y = this.targetPosition.y;
@@ -215,22 +210,15 @@ export class Unit {
             this.view.setDestinationMarker(false);
             return;
         }
-
         const effectiveStats = this.getEffectiveStats();
         const moveSpeed = effectiveStats.move;
-
         const travelDist = Math.min(dist, moveSpeed * (dt / 1000));
         const angle = Math.atan2(this.targetPosition.y - this.y, this.targetPosition.x - this.x);
         this.targetHeading = angle;
-
-        // Only move forward if facing roughly the correct direction
         let angleDiff = this.targetHeading - this.heading;
         while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
         while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
-
-        // If close to target, allow movement even if not perfectly aligned to prevent orbiting
         const angleTolerance = dist < 50 ? Math.PI : Math.PI / 2;
-
         if (Math.abs(angleDiff) < angleTolerance) {
             this.x += Math.cos(this.heading) * travelDist;
             this.y += Math.sin(this.heading) * travelDist;
@@ -243,24 +231,17 @@ export class Unit {
             this.state = STATE.IDLE;
             return;
         }
-
         const dist = COORD.distance(this.x, this.y, this.target.x, this.target.y);
-
-        // Turn to face target
         const angleToTarget = Math.atan2(this.target.y - this.y, this.target.x - this.x);
         this.targetHeading = angleToTarget;
-
         if (dist > this.range) {
-            // Chase target
             this.targetPosition = { x: this.target.x, y: this.target.y };
             this.state = STATE.MOVING;
         } else {
-            // In range, try to attack
             let angleDiff = this.targetHeading - this.heading;
             while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
             while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
-
-            if (this.attackCooldown <= 0 && Math.abs(angleDiff) < Math.PI / 6) { // Must be facing target to fire
+            if (this.attackCooldown <= 0 && Math.abs(angleDiff) < Math.PI / 6) {
                 this.performAttack(this.target);
             }
         }
@@ -269,7 +250,7 @@ export class Unit {
     moveTo(x, y) {
         this.targetPosition = { x, y };
         this.state = STATE.MOVING;
-        this.target = null; // Clear attack target when moving
+        this.target = null;
         this.view.setDestinationMarker(true, x, y);
     }
 
@@ -301,11 +282,8 @@ export class Unit {
 
     // ターゲットへの攻撃方向を計算(ラジアン)
     getAttackDirection(target) {
-        // ターゲットへの角度
         const angleToTarget = Math.atan2(target.y - this.y, target.x - this.x);
-        // 自分の向きとの差分
         let angleDiff = angleToTarget - this.heading;
-        // -π to π の範囲に正規化
         while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
         while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
         return Math.abs(angleDiff);
@@ -325,45 +303,32 @@ export class Unit {
 
     performAttack(target) {
         if (this.attackCooldown > 0) return;
-
-        // 陣形による有効ステータスを使用
         const effectiveStats = this.getEffectiveStats();
         const targetStats = target.getEffectiveStats();
-
-        // 基本ダメージ計算
         let damage = Math.floor(effectiveStats.atk * (this.hp / this.maxHp) - targetStats.def * 0.5);
         if (damage < 10) damage = 10;
-
-        // 方向別ダメージボーナス
         const attackAngle = target.getAttackDirection(this);
         const directionMultiplier = target.getDirectionalDamageMultiplier(attackAngle);
         damage = Math.floor(damage * directionMultiplier);
-
         target.takeDamage(damage);
-        this.attackCooldown = this.attackSpeed; // Reset cooldown
-
-        // ダメージメッセージ(方向ボーナス表示)
+        this.attackCooldown = this.attackSpeed;
         let directionText = '';
         if (directionMultiplier > 1.0) {
             directionText = ` (方向ボーナス×${directionMultiplier})`;
         }
         this.game.ui.setMessage(`${this.name} の攻撃！ ${target.name} に ${damage} のダメージ！${directionText}`);
-
         const anim = new BeamAnimation(this, target, 500, null, this.game);
         this.game.animations.push(anim);
     }
 
     takeDamage(amount) {
         this.hp -= amount;
-
         const anim = new DamagePopupAnimation(this.x, this.y, amount, 1000, null, this.game);
         this.game.animations.push(anim);
-
         if (this.hp <= 0) {
             this.hp = 0;
             this.game.ui.setMessage(`${this.name} は撃沈しました！`);
             this.destroy();
-            // Check victory condition after unit destruction
             this.game.checkWinCondition();
         }
     }
@@ -376,7 +341,6 @@ export class Unit {
         const effectiveStats = this.getEffectiveStats();
         const formationName = CONST.FORMATIONS[this.formation]?.name || '不明';
         const headingDeg = Math.round((this.heading * 180) / Math.PI);
-
         return {
             id: this.id,
             name: this.name,
