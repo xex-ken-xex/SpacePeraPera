@@ -4,6 +4,7 @@ import { Unit } from './unit.js';
 import * as UI from './uiUpdater.js';
 import { BLUEPRINTS } from './unitBlueprints.js';
 import { GameRenderer } from './renderer.js';
+import { InputManager } from './inputManager.js';
 
 export class Game {
     constructor() {
@@ -22,39 +23,55 @@ export class Game {
         this.elapsedGameTime = 0;
         this.isPaused = false;
 
-        this._initEventListeners();
+        // Initialize InputManager
+        this.inputManager = new InputManager(this.renderer, this);
+        this._setupInputCallbacks();
+
         UI.initTabSystem();
     }
 
-    _initEventListeners() {
-        this.renderer.container.addEventListener('mousemove', this._handleMouseMove.bind(this));
-        // Left-click for selection
-        this.renderer.container.addEventListener('click', this._handleLeftClick.bind(this));
-        // Right-click for commands
-        this.renderer.container.addEventListener('contextmenu', this._handleRightClick.bind(this));
-
-        const togglePause = (e) => {
-            if (e) e.preventDefault();
-            this.isPaused = !this.isPaused;
-            if (this.isPaused) {
-                UI.showPauseMessage();
+    _setupInputCallbacks() {
+        this.inputManager.onUnitSelected = (unit) => {
+            if (unit) {
+                if (unit.owner === CONST.PLAYER_1_ID) {
+                    this.selectUnit(unit);
+                } else {
+                    this._resetSelection();
+                }
             } else {
-                // When unpausing, we need to reset lastTime to avoid a huge dt jump
-                this.lastTime = performance.now();
-                UI.hidePauseMessage();
+                this._resetSelection();
             }
         };
 
-        // Keyboard controls
-        window.addEventListener('keydown', (e) => {
-            if (e.key === 'PageUp') this.timeScale = Math.min(10, this.timeScale + 1);
-            if (e.key === 'PageDown') this.timeScale = Math.max(1, this.timeScale - 1);
-            if (e.key === ' ') togglePause(e);
-        });
+        this.inputManager.onUnitCommand = (command) => {
+            if (!this.selectedUnit) return;
 
-        // UI Button controls
-        const uiElements = this.ui.cacheUIElements(); // Re-call to ensure ui is populated
-        if (uiElements.pauseButton) uiElements.pauseButton.addEventListener('click', togglePause);
+            if (command.type === 'attack') {
+                if (command.target.owner !== this.selectedUnit.owner) {
+                    this.selectedUnit.attackTarget(command.target);
+                    UI.setMessage(`${this.selectedUnit.name} が ${command.target.name} を攻撃目標に設定！`);
+                }
+            } else if (command.type === 'move') {
+                this.selectedUnit.moveTo(command.x, command.y);
+                UI.setMessage(`${this.selectedUnit.name} が移動を開始。`);
+            }
+        };
+
+        this.inputManager.onMouseMove = (x, y) => {
+            UI.updateMouseCoord(x, y);
+        };
+
+        this.inputManager.onPauseToggle = () => {
+            this.togglePause();
+        };
+
+        this.inputManager.onTimeScaleChange = (delta) => {
+            this.timeScale = Math.max(1, Math.min(10, this.timeScale + delta));
+        };
+
+        // UI Button controls (still handled here or could be moved to InputManager if they were DOM elements managed by it, but UI is separate)
+        const uiElements = this.ui.cacheUIElements();
+        if (uiElements.pauseButton) uiElements.pauseButton.addEventListener('click', () => this.togglePause());
         if (uiElements.timeSlower) uiElements.timeSlower.addEventListener('click', () => this.timeScale = Math.max(1, this.timeScale - 1));
         if (uiElements.timeFaster) uiElements.timeFaster.addEventListener('click', () => this.timeScale = Math.min(10, this.timeScale + 1));
 
@@ -65,6 +82,17 @@ export class Game {
                     this._changeFormation(e.target.dataset.formation);
                 }
             });
+        }
+    }
+
+    togglePause() {
+        this.isPaused = !this.isPaused;
+        if (this.isPaused) {
+            UI.showPauseMessage();
+        } else {
+            // When unpausing, we need to reset lastTime to avoid a huge dt jump
+            this.lastTime = performance.now();
+            UI.hidePauseMessage();
         }
     }
 
@@ -113,8 +141,6 @@ export class Game {
 
     gameLoop(timestamp) {
         if (this.isPaused) {
-            // When paused, only render the scene and listen for the next frame.
-            // We also update the pause button icon state.
             UI.updatePauseButton(this.isPaused);
             this.renderer.render();
             requestAnimationFrame(this.gameLoop.bind(this));
@@ -128,7 +154,7 @@ export class Game {
         if (!this.gameOver) {
             this.elapsedGameTime += scaledDt;
 
-            // Update AI - use real dt to avoid excessive updates on high speed
+            // Update AI
             this.aiUpdateAccumulator += dt;
             if (this.aiUpdateAccumulator >= CONST.AI_UPDATE_INTERVAL) {
                 this._updateAI(this.aiUpdateAccumulator);
@@ -182,10 +208,7 @@ export class Game {
         if (playerUnits.length === 0) return;
 
         aiUnits.forEach(aiUnit => {
-            // If idle and has no target, find a new one to move towards.
-            // The _scanAndEngage logic in the Unit class will handle opportunistic attacks.
             if (aiUnit.state === 'idle' && !aiUnit.target) {
-                // Find the closest player unit
                 let closestTarget = null;
                 let minDistance = Infinity;
 
@@ -198,7 +221,6 @@ export class Game {
                 });
 
                 if (closestTarget) {
-                    // Command to attack, which will cause movement if out of range
                     aiUnit.attackTarget(closestTarget);
                 }
             }
@@ -208,14 +230,7 @@ export class Game {
     _isUnitVisibleToPlayer(target, viewerId) {
         if (target.hp <= 0) return false;
         if (target.owner === viewerId) return true;
-        // In real-time, maybe all units are visible for now
         return true;
-        // Or use sight range:
-        // return this.units.some(u =>
-        //     u.owner === viewerId &&
-        //     u.hp > 0 &&
-        //     COORD.distance(u.x, u.y, target.x, target.y) <= u.sightRange
-        // );
     }
 
     checkWinCondition() {
@@ -247,93 +262,6 @@ export class Game {
             }
         }
         return null;
-    }
-
-    _handleMouseMove(e) {
-        const intersect = this.renderer.getRayIntersection(e.clientX, e.clientY);
-        if (intersect) {
-            UI.updateMouseCoord(intersect.x, intersect.y);
-        }
-    }
-
-    _handleLeftClick(e) {
-        if (this.gameOver) return;
-
-        // 1. Check for 3D object intersection (Ships, Rings)
-        const unitMeshes = this.units.map(u => u.meshGroup).filter(g => g !== null);
-        const intersects = this.renderer.raycastObjects(e.clientX, e.clientY, unitMeshes);
-
-        if (intersects.length > 0) {
-            // Find which unit belongs to the intersected object
-            const hitObject = intersects[0].object;
-            let targetGroup = hitObject;
-            while (targetGroup.parent && targetGroup.parent.type !== 'Scene') {
-                targetGroup = targetGroup.parent;
-            }
-
-            const clickedUnit = this.units.find(u => u.meshGroup === targetGroup);
-            if (clickedUnit) {
-                if (clickedUnit.owner === CONST.PLAYER_1_ID) {
-                    this.selectUnit(clickedUnit);
-                } else {
-                    this._resetSelection();
-                }
-                return;
-            }
-        }
-
-        // 2. Fallback to ground plane intersection (for empty space clicks or loose targeting)
-        const intersect = this.renderer.getRayIntersection(e.clientX, e.clientY);
-        if (!intersect) return;
-
-        const clickedUnit = this._getUnitAt(intersect.x, intersect.y);
-
-        if (clickedUnit && clickedUnit.owner === CONST.PLAYER_1_ID) {
-            this.selectUnit(clickedUnit);
-        } else {
-            this._resetSelection();
-        }
-    }
-
-    _handleRightClick(e) {
-        e.preventDefault();
-        if (this.gameOver) return;
-        if (!this.selectedUnit) return;
-
-        // Check for 3D object intersection first (for attacking)
-        const unitMeshes = this.units.map(u => u.meshGroup).filter(g => g !== null);
-        const intersects = this.renderer.raycastObjects(e.clientX, e.clientY, unitMeshes);
-
-        if (intersects.length > 0) {
-            const hitObject = intersects[0].object;
-            let targetGroup = hitObject;
-            while (targetGroup.parent && targetGroup.parent.type !== 'Scene') {
-                targetGroup = targetGroup.parent;
-            }
-
-            const targetUnit = this.units.find(u => u.meshGroup === targetGroup);
-            if (targetUnit && targetUnit.owner !== this.selectedUnit.owner) {
-                this.selectedUnit.attackTarget(targetUnit);
-                UI.setMessage(`${this.selectedUnit.name} が ${targetUnit.name} を攻撃目標に設定！`);
-                return;
-            }
-        }
-
-        // Fallback to ground intersection
-        const intersect = this.renderer.getRayIntersection(e.clientX, e.clientY);
-        if (!intersect) return;
-
-        const targetUnit = this._getUnitAt(intersect.x, intersect.y);
-
-        if (targetUnit) {
-            if (targetUnit.owner !== this.selectedUnit.owner) {
-                this.selectedUnit.attackTarget(targetUnit);
-                UI.setMessage(`${this.selectedUnit.name} が ${targetUnit.name} を攻撃目標に設定！`);
-            }
-        } else {
-            this.selectedUnit.moveTo(intersect.x, intersect.y);
-            UI.setMessage(`${this.selectedUnit.name} が移動を開始。`);
-        }
     }
 
     _resetSelection() {

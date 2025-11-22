@@ -1,7 +1,7 @@
-import * as THREE from 'three';
-import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import * as CONST from './constants.js';
 import * as COORD from './coordUtils.js';
+import { UnitView } from './unitView.js';
+import { BeamAnimation, DamagePopupAnimation } from './animations.js';
 
 // ユニットの状態
 const STATE = {
@@ -52,15 +52,8 @@ export class Unit {
         this.shipInitialPositions = [];
         this.shipTargetPositions = [];
 
-        // 3D Object
-        this.meshGroup = null;
-        this.shipMeshes = [];
-        this.selectionRing = null;
-        this.hitAreaRing = null;
-        this.labelObject = null;
-        this.destinationMarker = null;
-
-        this._init3DObject();
+        // View
+        this.view = new UnitView(this, game);
     }
 
     get state() {
@@ -76,6 +69,14 @@ export class Unit {
         }
     }
 
+    get meshGroup() {
+        return this.view.meshGroup;
+    }
+
+    get shipMeshes() {
+        return this.view.shipMeshes;
+    }
+
     setFormation(formationType) {
         if (this.formation === formationType && !this.isChangingFormation) {
             return; // No change needed
@@ -85,194 +86,17 @@ export class Unit {
         this.formation = formationType;
 
         // Store current positions as the starting point for the new transition
-        this.shipInitialPositions = this.shipMeshes.map(ship => ship.position.clone());
+        this.shipInitialPositions = this.view.shipMeshes.map(ship => ship.position.clone());
 
         // Calculate new target positions
-        this.shipTargetPositions = this._calculateFormationPositions(formationType);
+        this.shipTargetPositions = this.view._calculateFormationPositions(formationType);
 
         this.isChangingFormation = true;
         this.formationTransitionTime = 0;
     }
 
     setSelected(isSelected) {
-        this.updateVisuals(isSelected, true);
-    }
-
-    _init3DObject() {
-        this.meshGroup = new THREE.Group();
-
-        const shipCount = 100; // 100 ships per unit
-        const color = this.owner === CONST.PLAYER_1_ID ? CONST.PLAYER_1_COLOR : CONST.PLAYER_2_COLOR;
-
-        for (let i = 0; i < shipCount; i++) {
-            const shipGroup = this._createDetailedShip(color);
-            this.shipMeshes.push(shipGroup);
-            this.meshGroup.add(shipGroup);
-        }
-
-        this._arrangeShipsInFormation();
-
-        // Selection Ring
-        const ringGeo = new THREE.RingGeometry(CONST.UNIT_RADIUS + 10, CONST.UNIT_RADIUS + 15, 32);
-        ringGeo.rotateX(-Math.PI / 2);
-        const ringMat = new THREE.MeshBasicMaterial({
-            color: 0x00ff00,
-            side: THREE.DoubleSide,
-            transparent: true,
-            opacity: 0
-        });
-        this.selectionRing = new THREE.Mesh(ringGeo, ringMat);
-        this.meshGroup.add(this.selectionRing);
-
-        // Debug Hit Area
-        const hitGeo = new THREE.RingGeometry(CONST.UNIT_RADIUS + 45, CONST.UNIT_RADIUS + 50, 32);
-        hitGeo.rotateX(-Math.PI / 2);
-        const hitMat = new THREE.MeshBasicMaterial({
-            color: 0xffffff,
-            side: THREE.DoubleSide,
-            transparent: true,
-            opacity: 0.3,
-            depthWrite: false
-        });
-        this.hitAreaRing = new THREE.Mesh(hitGeo, hitMat);
-        this.meshGroup.add(this.hitAreaRing);
-
-        // Spatial Label
-        const div = document.createElement('div');
-        div.className = 'unit-label';
-        div.textContent = this.name;
-        div.style.color = this.owner === CONST.PLAYER_1_ID ? '#00ffff' : '#ff0000';
-
-        // Add HP bar container
-        const hpBar = document.createElement('div');
-        hpBar.className = 'hp-bar';
-        const hpFill = document.createElement('div');
-        hpFill.className = 'hp-fill';
-        hpBar.appendChild(hpFill);
-        div.appendChild(hpBar);
-
-        // Add pointerdown event listener for selection
-        div.addEventListener('pointerdown', (e) => {
-            e.stopPropagation(); // Prevent event from bubbling to other elements
-            if (this.owner === CONST.PLAYER_1_ID) {
-                this.game.selectUnit(this);
-            }
-        });
-
-        this.labelObject = new CSS2DObject(div);
-        this.labelObject.position.set(0, 50, 0);
-        this.meshGroup.add(this.labelObject);
-
-        // Movement Arrow (only for player 1)
-        if (this.owner === CONST.PLAYER_1_ID) {
-            this.destinationMarker = this._createMovementArrow();
-        }
-
-        if (this.game.renderer) {
-            this.game.renderer.add(this.meshGroup);
-            if (this.destinationMarker) {
-                this.game.renderer.add(this.destinationMarker);
-            }
-        }
-
-        this.update3DPosition();
-    }
-
-    _createDetailedShip(color) {
-        const shipGroup = new THREE.Group();
-
-        // Main hull (elongated box)
-        const hullGeo = new THREE.BoxGeometry(CONST.SHIP_SIZE * 0.6, CONST.SHIP_SIZE * 0.4, CONST.SHIP_SIZE * 2);
-        const hullMat = new THREE.MeshStandardMaterial({
-            color: color,
-            metalness: 0.7,
-            roughness: 0.3,
-            emissive: color,
-            emissiveIntensity: 0.1
-        });
-        const hull = new THREE.Mesh(hullGeo, hullMat);
-        hull.position.z = 0;
-        shipGroup.add(hull);
-
-        // Bridge (command tower)
-        const bridgeGeo = new THREE.BoxGeometry(CONST.SHIP_SIZE * 0.4, CONST.SHIP_SIZE * 0.6, CONST.SHIP_SIZE * 0.5);
-        const bridgeMat = new THREE.MeshStandardMaterial({
-            color: color,
-            metalness: 0.6,
-            roughness: 0.4,
-            emissive: color,
-            emissiveIntensity: 0.15
-        });
-        const bridge = new THREE.Mesh(bridgeGeo, bridgeMat);
-        bridge.position.set(0, CONST.SHIP_SIZE * 0.3, -CONST.SHIP_SIZE * 0.3);
-        shipGroup.add(bridge);
-
-        // Engine glow (back of ship)
-        const engineGeo = new THREE.CylinderGeometry(CONST.SHIP_SIZE * 0.15, CONST.SHIP_SIZE * 0.2, CONST.SHIP_SIZE * 0.4, 8);
-        engineGeo.rotateX(Math.PI / 2);
-        const engineMat = new THREE.MeshStandardMaterial({
-            color: 0x00ffff,
-            emissive: 0x00ffff,
-            emissiveIntensity: 0.8,
-            transparent: true,
-            opacity: 0.9
-        });
-        const engine = new THREE.Mesh(engineGeo, engineMat);
-        engine.position.z = CONST.SHIP_SIZE * 1.2;
-        shipGroup.add(engine);
-
-        // Weapon pods (small boxes on sides)
-        const weaponGeo = new THREE.BoxGeometry(CONST.SHIP_SIZE * 0.2, CONST.SHIP_SIZE * 0.2, CONST.SHIP_SIZE * 0.6);
-        const weaponMat = new THREE.MeshStandardMaterial({
-            color: 0x444444,
-            metalness: 0.8,
-            roughness: 0.2
-        });
-
-        const weaponLeft = new THREE.Mesh(weaponGeo, weaponMat);
-        weaponLeft.position.set(-CONST.SHIP_SIZE * 0.4, 0, -CONST.SHIP_SIZE * 0.2);
-        shipGroup.add(weaponLeft);
-
-        const weaponRight = new THREE.Mesh(weaponGeo, weaponMat);
-        weaponRight.position.set(CONST.SHIP_SIZE * 0.4, 0, -CONST.SHIP_SIZE * 0.2);
-        shipGroup.add(weaponRight);
-
-        // Antenna (thin cylinder)
-        const antennaGeo = new THREE.CylinderGeometry(CONST.SHIP_SIZE * 0.05, CONST.SHIP_SIZE * 0.05, CONST.SHIP_SIZE * 0.8, 4);
-        const antennaMat = new THREE.MeshStandardMaterial({
-            color: 0xaaaaaa,
-            metalness: 0.9,
-            roughness: 0.1,
-            emissive: 0xff0000,
-            emissiveIntensity: 0.3
-        });
-        const antenna = new THREE.Mesh(antennaGeo, antennaMat);
-        antenna.position.set(0, CONST.SHIP_SIZE * 0.7, -CONST.SHIP_SIZE * 0.3);
-        shipGroup.add(antenna);
-
-        return shipGroup;
-    }
-
-    _createMovementArrow() {
-        const dir = new THREE.Vector3(0, 0, 1);
-        const origin = new THREE.Vector3(0, 0, 0);
-        const length = 50;
-        const hex = 0x00ffff;
-
-        const arrowHelper = new THREE.ArrowHelper(dir, origin, length, hex, 20, 10);
-        arrowHelper.visible = false;
-
-        // Make it semi-transparent
-        if (arrowHelper.line.material) {
-            arrowHelper.line.material.transparent = true;
-            arrowHelper.line.material.opacity = 0.5;
-        }
-        if (arrowHelper.cone.material) {
-            arrowHelper.cone.material.transparent = true;
-            arrowHelper.cone.material.opacity = 0.5;
-        }
-
-        return arrowHelper;
+        this.view.updateVisuals(isSelected, true);
     }
 
     update(dt) {
@@ -336,20 +160,12 @@ export class Unit {
         // Ease-out progress for a smoother stop
         const easedProgress = 1 - Math.pow(1 - progress, 3); // Cubic ease-out
 
-        this.shipMeshes.forEach((ship, i) => {
-            if (this.shipInitialPositions[i] && this.shipTargetPositions[i]) {
-                ship.position.lerpVectors(this.shipInitialPositions[i], this.shipTargetPositions[i], easedProgress);
-            }
-        });
+        this.view.lerpShips(this.shipInitialPositions, this.shipTargetPositions, easedProgress);
 
         if (progress >= 1.0) {
             this.isChangingFormation = false;
             // Snap to final positions to avoid floating point inaccuracies
-            this.shipMeshes.forEach((ship, i) => {
-                if (this.shipTargetPositions[i]) {
-                    ship.position.copy(this.shipTargetPositions[i]);
-                }
-            });
+            this.view.snapShips(this.shipTargetPositions);
         }
     }
 
@@ -374,8 +190,11 @@ export class Unit {
                     closestEnemy = enemies[i];
                 }
             }
-            this.state = this.target ? STATE.ATTACKING : STATE.IDLE;
-            if (this.destinationMarker) this.destinationMarker.visible = false;
+
+            // Set the closest enemy as target and switch to attacking state
+            this.target = closestEnemy;
+            this.state = STATE.ATTACKING;
+            this.view.setDestinationMarker(false);
             return;
         }
     }
@@ -387,9 +206,13 @@ export class Unit {
         }
 
         const dist = COORD.distance(this.x, this.y, this.targetPosition.x, this.targetPosition.y);
-        if (dist < 10) { // Reached destination
+
+        // Stop if very close to avoid spinning
+        if (dist < 5) {
+            this.x = this.targetPosition.x;
+            this.y = this.targetPosition.y;
             this.state = STATE.IDLE;
-            if (this.destinationMarker) this.destinationMarker.visible = false;
+            this.view.setDestinationMarker(false);
             return;
         }
 
@@ -405,7 +228,10 @@ export class Unit {
         while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
         while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
 
-        if (Math.abs(angleDiff) < Math.PI / 2) { // Allow movement within 90 degrees of target
+        // If close to target, allow movement even if not perfectly aligned to prevent orbiting
+        const angleTolerance = dist < 50 ? Math.PI : Math.PI / 2;
+
+        if (Math.abs(angleDiff) < angleTolerance) {
             this.x += Math.cos(this.heading) * travelDist;
             this.y += Math.sin(this.heading) * travelDist;
         }
@@ -444,133 +270,23 @@ export class Unit {
         this.targetPosition = { x, y };
         this.state = STATE.MOVING;
         this.target = null; // Clear attack target when moving
-        if (this.destinationMarker) {
-            this.destinationMarker.position.set(x, 5, y);
-            this.destinationMarker.visible = true;
-
-            // Point arrow to destination
-            const dir = new THREE.Vector3(x - this.x, 0, y - this.y).normalize();
-            this.destinationMarker.setDirection(dir);
-            this.destinationMarker.position.set(this.x, 5, this.y);
-
-            // Scale arrow based on distance
-            const dist = COORD.distance(this.x, this.y, x, y);
-            this.destinationMarker.setLength(Math.min(dist, 200), 20, 10);
-        }
+        this.view.setDestinationMarker(true, x, y);
     }
 
     attackTarget(targetUnit) {
         if (targetUnit && targetUnit.hp > 0) {
             this.target = targetUnit;
             this.state = STATE.ATTACKING;
-            if (this.destinationMarker) {
-                this.destinationMarker.visible = false;
-            }
+            this.view.setDestinationMarker(false);
         }
     }
 
     update3DPosition() {
-        if (this.meshGroup) {
-            this.meshGroup.position.set(this.x, 0, this.y);
-            // Correct heading by -90 degrees to align with model orientation
-            this.meshGroup.rotation.y = -this.heading - Math.PI / 2;
-        }
-
-        if (this.destinationMarker && this.destinationMarker.visible && this.targetPosition) {
-            // Update arrow position to follow unit
-            this.destinationMarker.position.set(this.x, 5, this.y);
-
-            // Update arrow direction and length
-            const dist = COORD.distance(this.x, this.y, this.targetPosition.x, this.targetPosition.y);
-            const dir = new THREE.Vector3(this.targetPosition.x - this.x, 0, this.targetPosition.y - this.y).normalize();
-            this.destinationMarker.setDirection(dir);
-            this.destinationMarker.setLength(Math.min(dist, 200), 20, 10);
-        }
-    }
-
-    _calculateFormationPositions(formationType) {
-        const positions = [];
-        const shipCount = this.shipMeshes.length;
-
-        // Formation parameters
-        const shipSpacing = CONST.SHIP_SIZE * 3;
-        const lineLength = 200;
-
-        for (let i = 0; i < shipCount; i++) {
-            let x = 0,
-                y = 0,
-                z = 0;
-
-            switch (formationType) {
-                case 'spindle': // Diamond shape
-                    const numPerSide = Math.ceil(Math.sqrt(shipCount));
-                    const row = Math.floor(i / numPerSide);
-                    const col = i % numPerSide;
-                    const totalRows = Math.ceil(shipCount / numPerSide);
-
-                    x = (col - (numPerSide - 1) / 2) * shipSpacing * 1.5;
-                    z = (row - (totalRows - 1) / 2) * shipSpacing * 2;
-
-                    // Make it diamond-like by squeezing the ends
-                    if (totalRows > 1) {
-                        const normalizedRow = Math.abs((row - (totalRows - 1) / 2) / ((totalRows - 1) / 2));
-                        x *= (1 - normalizedRow);
-                    }
-                    break;
-
-                case 'line': // Horizontal line
-                    const shipsPerLine = 25;
-                    const lineNum = Math.floor(i / shipsPerLine);
-                    const posInLine = i % shipsPerLine;
-
-                    x = (posInLine - shipsPerLine / 2) * (lineLength / shipsPerLine);
-                    z = lineNum * shipSpacing * -1.5;
-                    break;
-
-                default: // Default to circle if formation is unknown
-                    const r = Math.sqrt(i / shipCount) * CONST.UNIT_RADIUS * 2;
-                    const theta = i * (Math.PI * (3 - Math.sqrt(5))); // Golden angle for spiral
-                    x = r * Math.cos(theta);
-                    z = r * Math.sin(theta);
-                    break;
-            }
-            positions.push(new THREE.Vector3(x, y, z));
-        }
-        return positions;
-    }
-
-    _arrangeShipsInFormation() {
-        const positions = this._calculateFormationPositions(this.formation);
-        this.shipMeshes.forEach((ship, i) => {
-            ship.position.copy(positions[i]);
-            ship.rotation.y = (Math.random() - 0.5) * 0.2; // Slight random rotation
-        });
+        this.view.updatePosition();
     }
 
     updateVisuals(isSelected, isVisible = true) {
-        if (!this.meshGroup) return;
-
-        this.meshGroup.visible = isVisible;
-        if (!isVisible) return;
-
-        if (this.selectionRing) {
-            this.selectionRing.material.opacity = isSelected ? 0.8 : 0;
-        }
-
-        const hpRatio = this.hp / this.maxHp;
-        const currentShipCount = Math.ceil(hpRatio * this.shipMeshes.length);
-
-        this.shipMeshes.forEach((shipGroup, index) => {
-            shipGroup.visible = index < currentShipCount;
-        });
-
-        if (this.labelObject) {
-            const hpPercent = hpRatio * 100;
-            const fill = this.labelObject.element.querySelector('.hp-fill');
-            if (fill) fill.style.width = `${hpPercent}%`;
-
-            this.labelObject.visible = this.hp > 0;
-        }
+        this.view.updateVisuals(isSelected, isVisible);
     }
 
     // 陣形による有効ステータスを取得
@@ -583,7 +299,7 @@ export class Unit {
         };
     }
 
-    // ターゲットへの攻撃方向を計算（ラジアン）
+    // ターゲットへの攻撃方向を計算(ラジアン)
     getAttackDirection(target) {
         // ターゲットへの角度
         const angleToTarget = Math.atan2(target.y - this.y, target.x - this.x);
@@ -626,26 +342,22 @@ export class Unit {
         target.takeDamage(damage);
         this.attackCooldown = this.attackSpeed; // Reset cooldown
 
-        // ダメージメッセージ（方向ボーナス表示）
+        // ダメージメッセージ(方向ボーナス表示)
         let directionText = '';
         if (directionMultiplier > 1.0) {
             directionText = ` (方向ボーナス×${directionMultiplier})`;
         }
         this.game.ui.setMessage(`${this.name} の攻撃！ ${target.name} に ${damage} のダメージ！${directionText}`);
 
-        import('./animations.js').then(module => {
-            const anim = new module.BeamAnimation(this, target, 500, null, this.game);
-            this.game.animations.push(anim);
-        });
+        const anim = new BeamAnimation(this, target, 500, null, this.game);
+        this.game.animations.push(anim);
     }
 
     takeDamage(amount) {
         this.hp -= amount;
 
-        import('./animations.js').then(module => {
-            const anim = new module.DamagePopupAnimation(this.x, this.y, amount, 1000, null, this.game);
-            this.game.animations.push(anim);
-        });
+        const anim = new DamagePopupAnimation(this.x, this.y, amount, 1000, null, this.game);
+        this.game.animations.push(anim);
 
         if (this.hp <= 0) {
             this.hp = 0;
@@ -657,44 +369,7 @@ export class Unit {
     }
 
     destroy() {
-        if (!this.meshGroup) return;
-
-        // Dispose all geometries and materials in ship groups
-        this.shipMeshes.forEach(shipGroup => {
-            shipGroup.children.forEach(mesh => {
-                if (mesh.geometry) mesh.geometry.dispose();
-                if (mesh.material) mesh.material.dispose();
-            });
-        });
-
-        if (this.selectionRing) {
-            if (this.selectionRing.geometry) this.selectionRing.geometry.dispose();
-            if (this.selectionRing.material) this.selectionRing.material.dispose();
-        }
-
-        if (this.hitAreaRing) {
-            if (this.hitAreaRing.geometry) this.hitAreaRing.geometry.dispose();
-            if (this.hitAreaRing.material) this.hitAreaRing.material.dispose();
-        }
-
-        // Remove label
-        if (this.labelObject) {
-            this.meshGroup.remove(this.labelObject);
-            this.labelObject = null;
-        }
-
-        // Remove from scene
-        this.game.renderer.remove(this.meshGroup);
-        this.meshGroup = null;
-        this.shipMeshes = [];
-
-        // Clean up marker
-        if (this.destinationMarker) {
-            this.game.renderer.remove(this.destinationMarker);
-            if (this.destinationMarker.geometry) this.destinationMarker.geometry.dispose();
-            if (this.destinationMarker.material) this.destinationMarker.material.dispose();
-            this.destinationMarker = null;
-        }
+        this.view.destroy();
     }
 
     getDebugInfo() {
