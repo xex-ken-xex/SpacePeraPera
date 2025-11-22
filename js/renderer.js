@@ -294,6 +294,15 @@ export class GameRenderer {
         return null;
     }
 
+    raycastObjects(clientX, clientY, objects) {
+        const rect = this.renderer.domElement.getBoundingClientRect();
+        this.mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+        this.mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+
+        this.raycaster.setFromCamera(this.mouse, this.camera);
+        return this.raycaster.intersectObjects(objects, true);
+    }
+
     add(object) {
         this.scene.add(object);
     }

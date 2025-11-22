@@ -94,6 +94,10 @@ export class Unit {
         this.formationTransitionTime = 0;
     }
 
+    setSelected(isSelected) {
+        this.updateVisuals(isSelected, true);
+    }
+
     _init3DObject() {
         this.meshGroup = new THREE.Group();
 
@@ -136,20 +140,32 @@ export class Unit {
         // Spatial Label
         const div = document.createElement('div');
         div.className = 'unit-label';
-        if (this.owner !== CONST.PLAYER_1_ID) {
-            div.classList.add('enemy');
-        }
-        div.innerHTML = `
-            <div class="name">${this.name}</div>
-            <div class="hp-bar"><div class="hp-fill" style="width: 100%"></div></div>
-        `;
+        div.textContent = this.name;
+        div.style.color = this.owner === CONST.PLAYER_1_ID ? '#00ffff' : '#ff0000';
+
+        // Add HP bar container
+        const hpBar = document.createElement('div');
+        hpBar.className = 'hp-bar';
+        const hpFill = document.createElement('div');
+        hpFill.className = 'hp-fill';
+        hpBar.appendChild(hpFill);
+        div.appendChild(hpBar);
+
+        // Add pointerdown event listener for selection
+        div.addEventListener('pointerdown', (e) => {
+            e.stopPropagation(); // Prevent event from bubbling to other elements
+            if (this.owner === CONST.PLAYER_1_ID) {
+                this.game.selectUnit(this);
+            }
+        });
+
         this.labelObject = new CSS2DObject(div);
         this.labelObject.position.set(0, 50, 0);
         this.meshGroup.add(this.labelObject);
 
-        // Destination Marker (only for player 1)
+        // Movement Arrow (only for player 1)
         if (this.owner === CONST.PLAYER_1_ID) {
-            this.destinationMarker = this._createDestinationMarker();
+            this.destinationMarker = this._createMovementArrow();
         }
 
         if (this.game.renderer) {
@@ -160,24 +176,6 @@ export class Unit {
         }
 
         this.update3DPosition();
-    }
-
-    _createDestinationMarker() {
-        const color = this.owner === CONST.PLAYER_1_ID ? CONST.PLAYER_1_COLOR : CONST.PLAYER_2_COLOR;
-        const geometry = new THREE.ConeGeometry(15, 40, 8);
-        geometry.translate(0, 20, 0); // Move origin to the base
-        geometry.rotateX(Math.PI); // Point down
-        const material = new THREE.MeshStandardMaterial({
-            color: color,
-            emissive: color,
-            emissiveIntensity: 0.6,
-            transparent: true,
-            opacity: 0.6,
-            depthWrite: false
-        });
-        const marker = new THREE.Mesh(geometry, material);
-        marker.visible = false;
-        return marker;
     }
 
     _createDetailedShip(color) {
@@ -253,6 +251,28 @@ export class Unit {
         shipGroup.add(antenna);
 
         return shipGroup;
+    }
+
+    _createMovementArrow() {
+        const dir = new THREE.Vector3(0, 0, 1);
+        const origin = new THREE.Vector3(0, 0, 0);
+        const length = 50;
+        const hex = 0x00ffff;
+
+        const arrowHelper = new THREE.ArrowHelper(dir, origin, length, hex, 20, 10);
+        arrowHelper.visible = false;
+
+        // Make it semi-transparent
+        if (arrowHelper.line.material) {
+            arrowHelper.line.material.transparent = true;
+            arrowHelper.line.material.opacity = 0.5;
+        }
+        if (arrowHelper.cone.material) {
+            arrowHelper.cone.material.transparent = true;
+            arrowHelper.cone.material.opacity = 0.5;
+        }
+
+        return arrowHelper;
     }
 
     update(dt) {
@@ -354,42 +374,27 @@ export class Unit {
                     closestEnemy = enemies[i];
                 }
             }
-            this.attackTarget(closestEnemy);
+            this.state = this.target ? STATE.ATTACKING : STATE.IDLE;
+            if (this.destinationMarker) this.destinationMarker.visible = false;
+            return;
         }
     }
 
     _handleMovement(dt) {
-        // AI opportunistic attack logic
-        if (this.owner === CONST.PLAYER_2_ID) {
-            const enemies = this.game.units.filter(u =>
-                u.owner !== this.owner &&
-                u.hp > 0 &&
-                COORD.distance(this.x, this.y, u.x, u.y) <= this.range
-            );
-
-            if (enemies.length > 0) {
-                this.targetPosition = null; // Stop moving
-                this.state = STATE.IDLE; // Switch to idle to trigger scan/attack
-                return;
-            }
+        if (!this.targetPosition) {
+            this.state = STATE.IDLE;
+            return;
         }
 
-        if (!this.targetPosition) {
+        const dist = COORD.distance(this.x, this.y, this.targetPosition.x, this.targetPosition.y);
+        if (dist < 10) { // Reached destination
             this.state = STATE.IDLE;
             if (this.destinationMarker) this.destinationMarker.visible = false;
             return;
         }
 
-        const dist = COORD.distance(this.x, this.y, this.targetPosition.x, this.targetPosition.y);
         const effectiveStats = this.getEffectiveStats();
-        const moveSpeed = effectiveStats.move / 10; // Adjust speed scaling
-
-        if (dist < 10) { // Arrival threshold
-            this.targetPosition = null;
-            this.state = this.target ? STATE.ATTACKING : STATE.IDLE;
-            if (this.destinationMarker) this.destinationMarker.visible = false;
-            return;
-        }
+        const moveSpeed = effectiveStats.move;
 
         const travelDist = Math.min(dist, moveSpeed * (dt / 1000));
         const angle = Math.atan2(this.targetPosition.y - this.y, this.targetPosition.x - this.x);
@@ -442,6 +447,15 @@ export class Unit {
         if (this.destinationMarker) {
             this.destinationMarker.position.set(x, 5, y);
             this.destinationMarker.visible = true;
+
+            // Point arrow to destination
+            const dir = new THREE.Vector3(x - this.x, 0, y - this.y).normalize();
+            this.destinationMarker.setDirection(dir);
+            this.destinationMarker.position.set(this.x, 5, this.y);
+
+            // Scale arrow based on distance
+            const dist = COORD.distance(this.x, this.y, x, y);
+            this.destinationMarker.setLength(Math.min(dist, 200), 20, 10);
         }
     }
 
@@ -460,6 +474,17 @@ export class Unit {
             this.meshGroup.position.set(this.x, 0, this.y);
             // Correct heading by -90 degrees to align with model orientation
             this.meshGroup.rotation.y = -this.heading - Math.PI / 2;
+        }
+
+        if (this.destinationMarker && this.destinationMarker.visible && this.targetPosition) {
+            // Update arrow position to follow unit
+            this.destinationMarker.position.set(this.x, 5, this.y);
+
+            // Update arrow direction and length
+            const dist = COORD.distance(this.x, this.y, this.targetPosition.x, this.targetPosition.y);
+            const dir = new THREE.Vector3(this.targetPosition.x - this.x, 0, this.targetPosition.y - this.y).normalize();
+            this.destinationMarker.setDirection(dir);
+            this.destinationMarker.setLength(Math.min(dist, 200), 20, 10);
         }
     }
 

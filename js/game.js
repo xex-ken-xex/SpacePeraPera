@@ -259,13 +259,37 @@ export class Game {
     _handleLeftClick(e) {
         if (this.gameOver) return;
 
+        // 1. Check for 3D object intersection (Ships, Rings)
+        const unitMeshes = this.units.map(u => u.meshGroup).filter(g => g !== null);
+        const intersects = this.renderer.raycastObjects(e.clientX, e.clientY, unitMeshes);
+
+        if (intersects.length > 0) {
+            // Find which unit belongs to the intersected object
+            const hitObject = intersects[0].object;
+            let targetGroup = hitObject;
+            while (targetGroup.parent && targetGroup.parent.type !== 'Scene') {
+                targetGroup = targetGroup.parent;
+            }
+
+            const clickedUnit = this.units.find(u => u.meshGroup === targetGroup);
+            if (clickedUnit) {
+                if (clickedUnit.owner === CONST.PLAYER_1_ID) {
+                    this.selectUnit(clickedUnit);
+                } else {
+                    this._resetSelection();
+                }
+                return;
+            }
+        }
+
+        // 2. Fallback to ground plane intersection (for empty space clicks or loose targeting)
         const intersect = this.renderer.getRayIntersection(e.clientX, e.clientY);
         if (!intersect) return;
 
         const clickedUnit = this._getUnitAt(intersect.x, intersect.y);
 
         if (clickedUnit && clickedUnit.owner === CONST.PLAYER_1_ID) {
-            this._selectUnit(clickedUnit);
+            this.selectUnit(clickedUnit);
         } else {
             this._resetSelection();
         }
@@ -273,40 +297,67 @@ export class Game {
 
     _handleRightClick(e) {
         e.preventDefault();
-        if (this.gameOver || !this.selectedUnit) return;
+        if (this.gameOver) return;
+        if (!this.selectedUnit) return;
 
+        // Check for 3D object intersection first (for attacking)
+        const unitMeshes = this.units.map(u => u.meshGroup).filter(g => g !== null);
+        const intersects = this.renderer.raycastObjects(e.clientX, e.clientY, unitMeshes);
+
+        if (intersects.length > 0) {
+            const hitObject = intersects[0].object;
+            let targetGroup = hitObject;
+            while (targetGroup.parent && targetGroup.parent.type !== 'Scene') {
+                targetGroup = targetGroup.parent;
+            }
+
+            const targetUnit = this.units.find(u => u.meshGroup === targetGroup);
+            if (targetUnit && targetUnit.owner !== this.selectedUnit.owner) {
+                this.selectedUnit.attackTarget(targetUnit);
+                UI.setMessage(`${this.selectedUnit.name} が ${targetUnit.name} を攻撃目標に設定！`);
+                return;
+            }
+        }
+
+        // Fallback to ground intersection
         const intersect = this.renderer.getRayIntersection(e.clientX, e.clientY);
         if (!intersect) return;
 
-        const clickedUnit = this._getUnitAt(intersect.x, intersect.y);
+        const targetUnit = this._getUnitAt(intersect.x, intersect.y);
 
-        // If right-clicked an enemy unit, command to attack
-        if (clickedUnit && clickedUnit.owner !== this.selectedUnit.owner) {
-            this.selectedUnit.attackTarget(clickedUnit);
-            UI.setMessage(`${this.selectedUnit.name} が ${clickedUnit.name} を攻撃目標に設定。`);
-        }
-        // If right-clicked empty space, command to move
-        else {
+        if (targetUnit) {
+            if (targetUnit.owner !== this.selectedUnit.owner) {
+                this.selectedUnit.attackTarget(targetUnit);
+                UI.setMessage(`${this.selectedUnit.name} が ${targetUnit.name} を攻撃目標に設定！`);
+            }
+        } else {
             this.selectedUnit.moveTo(intersect.x, intersect.y);
-            UI.setMessage(`${this.selectedUnit.name} が座標 (${Math.round(intersect.x)}, ${Math.round(intersect.y)}) へ移動開始。`);
+            UI.setMessage(`${this.selectedUnit.name} が移動を開始。`);
         }
-    }
-
-    _selectUnit(unit) {
-        this.selectedUnit = unit;
-        UI.updateSelectedUnitInfo(unit);
-        UI.setMessage(`${unit.name} を選択中。`);
-        UI.updateFormationButtons(unit);
-
-        // Show ranges
-        this.renderer.showRangeCircles(unit.x, unit.y, 0, unit.range); // No move range circle
     }
 
     _resetSelection() {
+        if (this.selectedUnit) {
+            this.selectedUnit.setSelected(false);
+        }
         this.selectedUnit = null;
         UI.updateSelectedUnitInfo(null);
         UI.updateFormationButtons(null);
-        this.renderer.hideRangeCircles();
+    }
+
+    _selectUnit(unit) {
+        if (this.selectedUnit) {
+            this.selectedUnit.setSelected(false);
+        }
+        this.selectedUnit = unit;
+        this.selectedUnit.setSelected(true);
+        UI.updateSelectedUnitInfo(this.selectedUnit);
+        UI.updateFormationButtons(this.selectedUnit);
+        UI.setMessage(`${unit.name} を選択中。`);
+    }
+
+    selectUnit(unit) {
+        this._selectUnit(unit);
     }
 
     _changeFormation(formationType) {
