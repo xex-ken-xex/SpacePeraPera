@@ -23,7 +23,7 @@ export class GameRenderer {
             CONST.CAMERA_NEAR,
             CONST.CAMERA_FAR
         );
-        const initialCameraPosition = new THREE.Vector3(500, 800, 3200);
+        const initialCameraPosition = new THREE.Vector3(-2000, -4000, 2000);
         const initialTarget = new THREE.Vector3(2000, 0, 2000);
 
         this.camera.position.copy(initialCameraPosition);

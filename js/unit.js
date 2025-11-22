@@ -33,7 +33,7 @@ export class Unit {
         this.radius = CONST.UNIT_RADIUS;
 
         // Real-time properties
-        this.state = STATE.IDLE;
+        this._state = STATE.IDLE;
         this.target = null; // Target unit for attack
         this.targetPosition = null; // Target position for movement
         this.attackCooldown = 0; // Time until next attack is ready
@@ -61,6 +61,19 @@ export class Unit {
         this.destinationMarker = null;
 
         this._init3DObject();
+    }
+
+    get state() {
+        return this._state;
+    }
+
+    set state(newState) {
+        if (this._state !== newState) {
+            this._state = newState;
+            if (this.game.selectedUnit === this) {
+                this.game.ui.updateSelectedUnitInfo(this);
+            }
+        }
     }
 
     setFormation(formationType) {
@@ -123,6 +136,9 @@ export class Unit {
         // Spatial Label
         const div = document.createElement('div');
         div.className = 'unit-label';
+        if (this.owner !== CONST.PLAYER_1_ID) {
+            div.classList.add('enemy');
+        }
         div.innerHTML = `
             <div class="name">${this.name}</div>
             <div class="hp-bar"><div class="hp-fill" style="width: 100%"></div></div>
